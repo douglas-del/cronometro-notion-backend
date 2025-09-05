@@ -110,7 +110,7 @@ app.post('/api/time-entries', async (req, res) => {
     }
 });
 
-// **FUNÇÃO DE RELATÓRIO CORRIGIDA - SEM DEPENDÊNCIA DE ROLLUPS**
+// **FUNÇÃO DE RELATÓRIO CORRIGIDA E MAIS ROBUSTA**
 app.post('/api/generate-report', async (req, res) => {
     const { clientId, clientName } = req.body;
     
@@ -155,15 +155,22 @@ app.post('/api/generate-report', async (req, res) => {
             }
         });
 
-        // Passo 4: Mapear os resultados para obter o nome da demanda e a duração.
-        const reportData = timeEntriesResponse.results.map(page => {
-            const demandRelation = page.properties.Demanda.relation[0];
-            const demandInfo = clientDemands.find(d => d.id === demandRelation.id);
-            return {
-                demandName: demandInfo ? demandInfo.name : 'Demanda Desconhecida',
-                duration: page.properties.Duração?.number || 0
-            };
-        });
+        // Passo 4: Mapear os resultados de forma segura para obter o nome da demanda e a duração.
+        const reportData = timeEntriesResponse.results
+            .map(page => {
+                // VERIFICAÇÃO DE SEGURANÇA: Garante que a relação com a demanda existe.
+                if (!page.properties.Demanda?.relation || page.properties.Demanda.relation.length === 0) {
+                    return null; // Ignora este registro se ele não estiver ligado a nenhuma demanda.
+                }
+                const demandRelation = page.properties.Demanda.relation[0];
+                const demandInfo = clientDemands.find(d => d.id === demandRelation.id);
+                
+                return {
+                    demandName: demandInfo ? demandInfo.name : 'Demanda Desconhecida',
+                    duration: page.properties.Duração?.number || 0
+                };
+            })
+            .filter(Boolean); // Remove os registros nulos (ignorados) da lista.
 
         if (reportData.length === 0) {
             return res.status(200).json({ message: `Nenhum registro de tempo na última semana para ${clientName}.` });
