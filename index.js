@@ -110,7 +110,6 @@ app.post('/api/time-entries', async (req, res) => {
     }
 });
 
-// **FUNÇÃO DE RELATÓRIO CORRIGIDA E MAIS ROBUSTA**
 app.post('/api/generate-report', async (req, res) => {
     const { clientId, clientName } = req.body;
     
@@ -119,7 +118,6 @@ app.post('/api/generate-report', async (req, res) => {
     }
 
     try {
-        // Passo 1: Encontrar todas as demandas associadas ao cliente selecionado.
         const demandsResponse = await notion.databases.query({
             database_id: DEMANDS_DB_ID,
             filter: {
@@ -137,13 +135,11 @@ app.post('/api/generate-report', async (req, res) => {
             return res.status(200).json({ message: `Nenhuma demanda encontrada para o cliente ${clientName}.` });
         }
 
-        // Passo 2: Criar um filtro para buscar todos os registros de tempo dessas demandas.
         const demandIdFilters = clientDemands.map(demand => ({
             property: 'Demanda',
             relation: { contains: demand.id }
         }));
 
-        // Passo 3: Buscar os registros de tempo da última semana que correspondem a qualquer uma das demandas do cliente.
         const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
         const timeEntriesResponse = await notion.databases.query({
             database_id: TIME_LOG_DB_ID,
@@ -155,12 +151,10 @@ app.post('/api/generate-report', async (req, res) => {
             }
         });
 
-        // Passo 4: Mapear os resultados de forma segura para obter o nome da demanda e a duração.
         const reportData = timeEntriesResponse.results
             .map(page => {
-                // VERIFICAÇÃO DE SEGURANÇA: Garante que a relação com a demanda existe.
                 if (!page.properties.Demanda?.relation || page.properties.Demanda.relation.length === 0) {
-                    return null; // Ignora este registro se ele não estiver ligado a nenhuma demanda.
+                    return null;
                 }
                 const demandRelation = page.properties.Demanda.relation[0];
                 const demandInfo = clientDemands.find(d => d.id === demandRelation.id);
@@ -170,21 +164,29 @@ app.post('/api/generate-report', async (req, res) => {
                     duration: page.properties.Duração?.number || 0
                 };
             })
-            .filter(Boolean); // Remove os registros nulos (ignorados) da lista.
+            .filter(Boolean);
 
         if (reportData.length === 0) {
             return res.status(200).json({ message: `Nenhum registro de tempo na última semana para ${clientName}.` });
         }
         
-        // Passo 5: Agregar os dados e formatar para a planilha.
         const aggregatedData = reportData.reduce((acc, entry) => {
             acc[entry.demandName] = (acc[entry.demandName] || 0) + entry.duration;
             return acc;
         }, {});
 
-        const sheetData = [['Demanda', 'Horas'], ...Object.entries(aggregatedData)];
+        // **ALTERAÇÃO AQUI: Converte as horas para o formato hh:mm:ss**
+        const formattedEntries = Object.entries(aggregatedData).map(([demand, hours]) => {
+            const totalSeconds = Math.floor(hours * 3600);
+            const h = Math.floor(totalSeconds / 3600);
+            const m = Math.floor((totalSeconds % 3600) / 60);
+            const s = totalSeconds % 60;
+            // Formato que o Google Sheets entende como duração
+            return [demand, `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`];
+        });
+
+        const sheetData = [['Demanda', 'Horas'], ...formattedEntries];
         
-        // Passo 6: Escrever os dados no Google Sheets.
         const spreadsheetId = GOOGLE_SHEET_ID;
         const sheetName = clientName;
 
@@ -202,7 +204,7 @@ app.post('/api/generate-report', async (req, res) => {
         await sheets.spreadsheets.values.update({
             spreadsheetId,
             range: `${sheetName}!A1`,
-            valueInputOption: 'USER_ENTERED',
+            valueInputOption: 'USER_ENTERED', // Essencial para o Sheets interpretar o formato
             requestBody: { values: sheetData }
         });
 
