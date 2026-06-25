@@ -39,31 +39,71 @@ app.get('/', (req, res) => {
   res.send('Servidor do Cronômetro Notion está no ar!');
 });
 
+// ALTERAÇÃO SEGURA: Agora busca TODOS os clientes se passar de 100
 app.get('/api/clients', async (req, res) => {
     try {
-        const response = await notion.databases.query({ database_id: CLIENTS_DB_ID, sorts: [{ property: 'Nome', direction: 'ascending' }] });
-        const clients = response.results.map(page => ({
-            id: page.id,
-            name: page.properties.Nome?.title[0]?.plain_text || 'Sem nome'
-        }));
+        let clients = [];
+        let hasMore = true;
+        let startCursor = undefined;
+
+        while (hasMore) {
+            const response = await notion.databases.query({ 
+                database_id: CLIENTS_DB_ID,
+                start_cursor: startCursor,
+                page_size: 100,
+                sorts: [{ property: 'Nome', direction: 'ascending' }] 
+            });
+            
+            const pageClients = response.results.map(page => ({
+                id: page.id,
+                name: page.properties.Nome?.title[0]?.plain_text || 'Sem nome'
+            }));
+
+            clients = clients.concat(pageClients);
+            hasMore = response.has_more;
+            startCursor = response.next_cursor;
+        }
+
+        // Ordenação alfabética final garantida
+        clients.sort((a, b) => a.name.localeCompare(b.name));
         res.json(clients);
     } catch (error) {
-        console.error('Erro ao buscar clientes:', error.body);
+        console.error('Erro ao buscar clientes:', error.body || error);
         res.status(500).json({ error: 'Falha ao obter clientes do Notion.' });
     }
 });
 
+// ALTERAÇÃO SEGURA: Agora busca TODAS as demandas se passar de 100
 app.get('/api/demands', async (req, res) => {
     try {
-        const response = await notion.databases.query({ database_id: DEMANDS_DB_ID, sorts: [{ property: 'Nome da Demanda', direction: 'ascending' }] });
-        const demands = response.results.map(page => ({
-            id: page.id,
-            name: page.properties['Nome da Demanda']?.title[0]?.plain_text || 'Sem nome',
-            clientId: page.properties.Cliente?.relation[0]?.id || null
-        }));
+        let demands = [];
+        let hasMore = true;
+        let startCursor = undefined;
+
+        while (hasMore) {
+            const response = await notion.databases.query({ 
+                database_id: DEMANDS_DB_ID,
+                start_cursor: startCursor,
+                page_size: 100,
+                sorts: [{ property: 'Nome da Demanda', direction: 'ascending' }] 
+            });
+            
+            const pageDemands = response.results.map(page => ({
+                id: page.id,
+                name: page.properties['Nome da Demanda']?.title[0]?.plain_text || 'Sem nome',
+                clientId: page.properties.Cliente?.relation[0]?.id || null
+            }));
+
+            demands = demands.concat(pageDemands);
+            hasMore = response.has_more;
+            startCursor = response.next_cursor;
+        }
+
+        // Ordenação alfabética final garantida
+        demands.sort((a, b) => a.name.localeCompare(b.name));
         res.json(demands);
     } catch (error) {
-        console.error('Erro ao buscar demandas:', error.body);
+        console.error('Erro ao buscar demandas:', error.body || error);
         res.status(500).json({ error: 'Falha ao obter demandas do Notion.' });
     }
 });
@@ -175,13 +215,12 @@ app.post('/api/generate-report', async (req, res) => {
             return acc;
         }, {});
 
-        // **ALTERAÇÃO AQUI: Converte as horas para o formato hh:mm:ss**
+        // Converte as horas para o formato hh:mm:ss
         const formattedEntries = Object.entries(aggregatedData).map(([demand, hours]) => {
             const totalSeconds = Math.floor(hours * 3600);
             const h = Math.floor(totalSeconds / 3600);
             const m = Math.floor((totalSeconds % 3600) / 60);
             const s = totalSeconds % 60;
-            // Formato que o Google Sheets entende como duração
             return [demand, `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`];
         });
 
@@ -204,12 +243,12 @@ app.post('/api/generate-report', async (req, res) => {
         await sheets.spreadsheets.values.update({
             spreadsheetId,
             range: `${sheetName}!A1`,
-            valueInputOption: 'USER_ENTERED', // Essencial para o Sheets interpretar o formato
+            valueInputOption: 'USER_ENTERED',
             requestBody: { values: sheetData }
         });
 
         const sheetUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
-        res.status(200).json({ message: 'Planilha atualizada com sucesso!', sheetUrl });
+        res.status(200).json({ message: 'Planilha updated com sucesso!', sheetUrl });
 
     } catch (error) {
         console.error('Erro ao gerar relatório:', error.response ? error.response.data : error.body);
@@ -222,4 +261,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Servidor rodando na porta ${PORT}`);
 });
-
